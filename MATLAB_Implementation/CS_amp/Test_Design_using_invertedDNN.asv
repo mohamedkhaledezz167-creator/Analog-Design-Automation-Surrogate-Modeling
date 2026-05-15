@@ -1,0 +1,23 @@
+clc; clear; close all;
+
+load inverse_dnn_model.mat 
+
+spec = [27, log10(5e6)];
+spec_n = (spec - Ymu) ./ Ysigma;
+
+x_n = predict(net_inv, spec_n);
+
+x = x_n .* Xsigma + Xmu;
+
+Rd = 10^x(1);
+Wn = 10^x(2);
+VG = x(3);
+Ln = 10^x(4);
+
+[GAIN, BW] =  run_ltspice_common_source(Rd,Wn,VG,Ln);
+
+fprintf('Rd= %.2f V/V\n',Rd);
+fprintf('Wn   = %.2e Hz\n', Wn);
+fprintf('VG  = %.2e Hz\n', VG);
+fprintf('Ln   = %.2e Hz\n', Ln);
+

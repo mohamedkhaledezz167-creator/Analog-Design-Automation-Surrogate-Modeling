@@ -1,0 +1,143 @@
+clc; clear; close all;
+
+%% =============================
+% Load dataset
+%% =============================
+load cs_dataset.mat
+% X = [Rd Wn VG Ln]
+% Y = [GAIN BW]
+
+results_dir = 'inverse_dnn_results';
+if ~exist(results_dir,'dir')
+    mkdir(results_dir);
+end
+
+%% =============================
+% Prepare INVERSE dataset
+% Inputs  = [GAIN BW]
+% Outputs = [Rd Wn VG Ln]
+%% =============================
+
+% Log-transform (VERY important)
+Yinv = [ ...
+    Y(:,1), ...          % Gain (linear)
+    log10(Y(:,2)) ...    % BW (log)
+];
+
+Xinv = [ ...
+    log10(X(:,1)), ...   % Rd
+    log10(X(:,2)), ...   % Wn
+    X(:,3), ...          % VG
+    log10(X(:,4)) ...    % Ln
+];
+
+%% =============================
+% Normalize
+%% =============================
+[Yinv_n, Ymu, Ysigma] = zscore(Yinv);
+[Xinv_n, Xmu, Xsigma] = zscore(Xinv);
+
+%% =============================
+% Train / Test split
+%% =============================
+N = size(Xinv_n,1);
+rng(1);
+idx = randperm(N);
+Ntrain = round(0.8*N);
+
+train_idx = idx(1:Ntrain);
+test_idx  = idx(Ntrain+1:end);
+
+Ytrain = Yinv_n(train_idx,:);
+Xtrain = Xinv_n(train_idx,:);
+
+Ytest  = Yinv_n(test_idx,:);
+Xtest  = Xinv_n(test_idx,:);
+
+%% =============================
+% Define Inverse DNN
+%% =============================
+layers = [
+    featureInputLayer(2)
+    fullyConnectedLayer(64)
+    reluLayer
+    fullyConnectedLayer(64)
+    reluLayer
+    fullyConnectedLayer(4)
+    regressionLayer
+];
+
+options = trainingOptions('adam', ...
+    'MaxEpochs', 400, ...
+    'MiniBatchSize', 128, ...
+    'InitialLearnRate', 1e-3, ...
+    'Shuffle', 'every-epoch', ...
+    'Plots', 'training-progress', ...
+    'Verbose', false);
+
+%% =============================
+% Train Network
+%% =============================
+net_inv = trainNetwork(Ytrain, Xtrain, layers, options);
+
+%% =============================
+% Test Prediction
+%% =============================
+Xpred_n = predict(net_inv, Ytest);
+
+Xpred = zeros(size(Xpred_n));
+Xtrue = zeros(size(Xpred_n));
+
+for i = 1:4
+    Xpred(:,i) = Xpred_n(:,i) .* Xsigma(i) + Xmu(i);
+    Xtrue(:,i) = Xinv(test_idx,i) .* Xsigma(i) + Xmu(i);
+end
+
+% De-log
+Rd_pred = 10.^Xpred(:,1);
+Wn_pred = 10.^Xpred(:,2);
+VG_pred = Xpred(:,3);
+Ln_pred = 10.^Xpred(:,4);
+
+Rd_true = 10.^Xtrue(:,1);
+Wn_true = 10.^Xtrue(:,2);
+VG_true = Xtrue(:,3);
+Ln_true = 10.^Xtrue(:,4);
+
+%% =============================
+% Error Metrics
+%% =============================
+fprintf('\nInverse Design Errors:\n');
+fprintf('Rd  RMSE = %.2f ohm\n', sqrt(mean((Rd_pred - Rd_true).^2)));
+fprintf('Wn  RMSE = %.2e m\n',  sqrt(mean((Wn_pred - Wn_true).^2)));
+fprintf('VG  RMSE = %.4f V\n',  sqrt(mean((VG_pred - VG_true).^2)));
+fprintf('Ln  RMSE = %.2e m\n',  sqrt(mean((Ln_pred - Ln_true).^2)));
+
+%% =============================
+% Plots
+%% =============================
+labels = {'Rd','Wn','VG','Ln'};
+true_vals = {Rd_true, Wn_true, VG_true, Ln_true};
+pred_vals = {Rd_pred, Wn_pred, VG_pred, Ln_pred};
+
+for k = 1:4
+    figure;
+    scatter(true_vals{k}, pred_vals{k}, 25, 'filled');
+    hold on;
+    plot([min(true_vals{k}) max(true_vals{k})], ...
+         [min(true_vals{k}) max(true_vals{k})],'r--','LineWidth',1.5);
+    xlabel(['True ',labels{k}]);
+    ylabel(['Predicted ',labels{k}]);
+    title(['Inverse DNN: ',labels{k}]);
+    grid on;
+    saveas(gcf, fullfile(results_dir,[labels{k},'_pred_vs_true.png']));
+end
+
+%% =============================
+% Save Model
+%% =============================
+save(fullfile(results_dir,'inverse_dnn_model.mat'), ...
+    'net_inv','Xmu','Xsigma','Ymu','Ysigma');
+save
+
+disp('Inverse DNN training completed and saved.');
