@@ -1,0 +1,6 @@
+* Resistive Divider
+V1 vin 0 10V
+R1 vin vout 10k
+R2 vout 0 10k
+.op
+.end

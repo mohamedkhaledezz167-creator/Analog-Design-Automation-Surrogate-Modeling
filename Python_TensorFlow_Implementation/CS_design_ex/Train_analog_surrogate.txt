@@ -1,0 +1,163 @@
+import tensorflow as tf
+
+# Check if the GPU is recognized
+gpu_available = tf.config.list_physical_devices('GPU')
+
+print("Num GPUs Available: ", len(gpu_available))
+if gpu_available:
+    print("Success! TensorFlow is using the GPU.")
+    # This prints the name of your GPU (e.g., RTX 3060)
+    print("Device Name:", gpu_available[0].name)
+else:
+    print("Failure. TensorFlow is still using the CPU.")
+
+
+
+
+
+
+
+
+
+#STEP 0 — Load dataset
+
+import numpy as np
+
+data = np.load("cs_dataset_final_justgo.npz")   # or from converted .mat
+X = data["X"]
+Y = data["Y"]
+
+
+
+    #---------------------------------------------------------------------------------------------------------------------------#
+
+#STEP 1 — Log transform (IDENTICAL to MATLAB)
+
+X_log = np.column_stack([
+    np.log10(X[:, 0]),   # Rd
+    np.log10(X[:, 1]),   # Wn
+    X[:, 2],             # VG
+    np.log10(X[:, 3])    # Ln
+])
+
+Y_log = np.column_stack([
+    Y[:, 0],             # Gain
+    np.log10(Y[:, 1])    # BW
+])
+
+
+  #---------------------------------------------------------------------------------------------------------------------------#
+# STEP 2 — Normalize (z-score)
+
+Xmu = X_log.mean(axis=0)
+Xsigma = X_log.std(axis=0)
+Xn = (X_log - Xmu) / Xsigma
+
+Ymu = Y_log.mean(axis=0)
+Ysigma = Y_log.std(axis=0)
+Yn = (Y_log - Ymu) / Ysigma
+
+   #---------------------------------------------------------------------------------------------------------------------------#
+
+#STEP 3 — Train / test split (80/20)
+
+from sklearn.model_selection import train_test_split
+
+Xtrain, Xtest, Ytrain, Ytest = train_test_split(
+    Xn, Yn, test_size=0.2, random_state=1
+)
+
+
+
+    #-------------------------------------------------------------------------------------------------------------------------#
+
+#STEP 4 — Define DNN (MATLAB-equivalent)
+
+import tensorflow as tf
+from tensorflow.keras import layers, models
+
+model = models.Sequential([
+    layers.Input(shape=(4,)),
+    layers.Dense(64, activation='relu'),
+    layers.Dense(64, activation='relu'),
+    layers.Dense(32, activation='relu'),
+    layers.Dense(2)   # regression output
+])
+
+
+    #-------------------------------------------------------------------------------------------------------------------------#
+
+#STEP 5 — Training options
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
+    loss='mse'
+)
+
+
+    #------------------------------------------------------------------------------------------------------------------------#
+
+   # STEP 6 — Train network
+    
+history = model.fit(
+    Xtrain, Ytrain,
+    epochs=500,
+    batch_size=64,
+    shuffle=True,
+    validation_split=0.1,
+    verbose=1
+)
+
+   #------------------------------------------------------------------------------------------------------------------------#
+        
+#STEP 7 — Predict on test set
+        
+Ypred_n = model.predict(Xtest)    
+
+    #------------------------------------------------------------------------------------------------------------------------#
+
+ # STEP 8 — De-normalize (CRITICAL)  
+
+Ypred_log = Ypred_n * Ysigma + Ymu
+
+GAIN_pred = Ypred_log[:, 0]
+BW_pred   = 10 ** Ypred_log[:, 1]
+
+GAIN_true = Y[test_idx := np.arange(len(Ytest)), 0]
+BW_true   = Y[test_idx, 1]
+
+     #------------------------------------------------------------------------------------------------------------------------#
+
+# STEP 9 — Error metrics
+          
+gain_rmse = np.sqrt(np.mean((GAIN_pred - GAIN_true) ** 2))
+bw_relerr = np.mean(np.abs(BW_pred - BW_true) / BW_true)
+
+print(f"GAIN RMSE = {gain_rmse:.3f}")
+print(f"BW Mean Relative Error = {bw_relerr*100:.2f} %")
+
+   
+
+# STEP 10 — Thesis-ready plots
+
+import matplotlib.pyplot as plt
+
+plt.figure()
+plt.scatter(GAIN_true, GAIN_pred, s=10)
+plt.xlabel("SPICE Gain")
+plt.ylabel("NN Predicted Gain")
+plt.grid(True)
+plt.title("Gain Prediction")
+plt.show()
+
+plt.figure()
+plt.scatter(BW_true, BW_pred, s=10)
+plt.xscale("log")
+plt.yscale("log")
+plt.xlabel("SPICE Bandwidth (Hz)")
+plt.ylabel("NN Predicted Bandwidth (Hz)")
+plt.grid(True)
+plt.title("Bandwidth Prediction")
+plt.show()
+
+
+         
